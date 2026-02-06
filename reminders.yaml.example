@@ -1,0 +1,11 @@
+# Static reminders - checked at each phase transition
+# days: daily, or list of mon/tue/wed/thu/fri/sat/sun
+
+static_reminders:
+  - name: Lunch
+    time: "14:00"
+    days: daily
+
+  - name: Workout
+    time: "17:30"
+    days: [mon, wed, fri]

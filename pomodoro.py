@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pomodoro state machine for body doubling with Claude Code.
+Pomodoro state machine for body doubling with Claude.
 Waits for acknowledgment before proceeding to next phase.
 """
 
@@ -23,21 +23,19 @@ def notify(title, message):
     if result.returncode != 0:
         print(f"  [Notification failed: {result.stderr.decode()}]")
 
-
 # === CONFIGURATION ===
-WORK_MINUTES = float(os.environ.get('POMODORO_WORK_MINUTES', 25))
-BREAK_MINUTES = float(os.environ.get('POMODORO_BREAK_MINUTES', 5))
-SUGGEST_END_AFTER_HOURS = float(os.environ.get('POMODORO_END_HOURS', 9))
-SUGGEST_END_AT_HOUR = int(os.environ.get('POMODORO_END_AT_HOUR', 17))  # 24h clock, e.g. 17 = 5 PM
+WORK_MINUTES = 25
+BREAK_MINUTES = 5
+SUGGEST_END_AFTER_HOURS = 9  # suggest ending after this many hours worked
+SUGGEST_END_AT_HOUR = 17.5  # suggest ending at this hour (24h clock, e.g. 17.5 = 5:30 PM)
 POLL_INTERVAL = 1  # seconds between checking for ack
 
-# === PATHS ===
-DATA_DIR = os.environ.get('POMODORO_DIR', os.path.expanduser('~/.claude/productivity'))
-SESSION_FILE = os.path.join(DATA_DIR, 'session.yaml')
-LOG_FILE = os.path.join(DATA_DIR, 'log.yaml')
-TASKS_FILE = os.path.join(DATA_DIR, 'tasks.yaml')
-PENDING_PROMPT_FILE = os.path.join(DATA_DIR, 'pending_prompt.txt')
-ACK_FILE = os.path.join(DATA_DIR, 'acknowledged.txt')
+SESSION_FILE = os.path.expanduser("~/.claude/productivity/session.yaml")
+LOG_FILE = os.path.expanduser("~/.claude/productivity/log.yaml")
+TASKS_FILE = os.path.expanduser("~/.claude/productivity/tasks.yaml")
+REMINDERS_FILE = os.path.expanduser("~/.claude/productivity/reminders.yaml")
+PENDING_PROMPT_FILE = os.path.expanduser("~/.claude/productivity/pending_prompt.txt")
+ACK_FILE = os.path.expanduser("~/.claude/productivity/acknowledged.txt")
 
 # === PROMPTS (for Claude to act on) ===
 WORK_COMPLETE_PROMPT = "Work session complete. Remind the user to drink water, stand up and stretch, and check on household chores."
@@ -45,32 +43,6 @@ WORK_COMPLETE_PROMPT = "Work session complete. Remind the user to drink water, s
 BREAK_COMPLETE_PROMPT = "Break complete. Offer the user a choice: continue their previous work session if any, or try a different task."
 
 END_SESSION_PROMPT = "The user has been working for several hours. Gently suggest they might want to end the session for today. Ask if they'd like to wrap up, summarise what was accomplished, and save progress."
-
-
-def ensure_data_dir():
-    """Create data directory and initial files if needed."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-
-    if not os.path.exists(SESSION_FILE):
-        with open(SESSION_FILE, 'w') as f:
-            yaml.dump({
-                'work_sessions_completed': 0,
-                'fun_sessions_completed': 0,
-                'current_task': None,
-                'current_task_type': None,
-                'start_time': None
-            }, f)
-
-    if not os.path.exists(LOG_FILE):
-        with open(LOG_FILE, 'w') as f:
-            yaml.dump({'projects': {}}, f)
-
-    if not os.path.exists(TASKS_FILE):
-        with open(TASKS_FILE, 'w') as f:
-            yaml.dump({
-                'work_tasks': [],
-                'fun_productive': []
-            }, f)
 
 
 def load_session():
@@ -112,7 +84,7 @@ def load_tasks():
 def lookup_task_type(task_name):
     """Look up whether a task is 'work' or 'fun' from tasks.yaml.
 
-    Returns 'work' or 'fun'. Raises ValueError if task not found.
+    Returns 'work', 'fun', or None if not found.
     """
     tasks = load_tasks()
     for task in tasks.get('work_tasks', []):
@@ -121,26 +93,59 @@ def lookup_task_type(task_name):
     for task in tasks.get('fun_productive', []):
         if task['name'] == task_name:
             return 'fun'
-    raise ValueError(f"Task '{task_name}' not found in tasks.yaml")
+    return None
 
 
 def parse_ack(content):
-    """Parse ack content. Format is always 'continue:task_name' or 'end'.
+    """Parse ack content.
+
+    Formats:
+      'continue:task_name' - start next work phase with this task (used after breaks)
+      'continue'           - proceed to break (used after work, keeps current task)
+      'end'                - end session
 
     Task type is looked up from tasks.yaml. For new tasks, Claude must
     add the task to tasks.yaml BEFORE writing the ack.
-    Returns dict with keys: action, task_name, task_type.
     """
     if content == "end":
         return {"action": "end"}
 
+    if content == "continue":
+        return {"action": "continue"}
+
     parts = content.split(":", 1)
     if len(parts) != 2 or not parts[1].strip():
-        raise ValueError(f"Malformed ack: expected 'action:task_name', got '{content}'")
+        print(f"  Error: malformed ack '{content}'. Prompting Claude to fix.")
+        write_pending_prompt(
+            f"Malformed ack received: '{content}'. Expected one of: 'continue:Task Name', "
+            f"'continue', or 'end'. Check the format and re-write the ack file.")
+        return None
 
     action = parts[0]
     task_name = parts[1]
     task_type = lookup_task_type(task_name)
+
+    if task_type is None:
+        tasks = load_tasks()
+        work_names = [t['name'] for t in tasks.get('work_tasks', [])]
+        fun_names = [t['name'] for t in tasks.get('fun_productive', [])]
+        existing = ', '.join(work_names + fun_names)
+        print(f"  Error: '{task_name}' not in tasks.yaml. Prompting Claude to fix.")
+        write_pending_prompt(
+            f"Task '{task_name}' is not in tasks.yaml. Existing tasks: [{existing}]. "
+            f"Check if this is a typo or name mismatch. If it's a genuinely new task, "
+            f"add it to tasks.yaml under the correct category. Confirm with the user, then re-write the ack file.")
+        return None
+
+    log = load_log()
+    if task_name not in log['projects']:
+        existing = ', '.join(log['projects'].keys())
+        print(f"  Error: '{task_name}' not in log.yaml. Prompting Claude to fix.")
+        write_pending_prompt(
+            f"Task '{task_name}' is not in log.yaml. Existing projects: [{existing}]. "
+            f"Check if this is a typo or name mismatch. If it's a genuinely new task, "
+            f"add it to log.yaml with zeroed values. Confirm with the user, then re-write the ack file.")
+        return None
 
     return {"action": action, "task_name": task_name, "task_type": task_type}
 
@@ -148,8 +153,7 @@ def parse_ack(content):
 def wait_for_ack():
     """Block until acknowledgment file appears, parse content, then clear it.
 
-    Returns parsed dict with action, task_name, and task_type.
-    Updates session with the current task info.
+    Returns parsed dict. Updates session task only when a task name is provided.
     """
     print("  Waiting for check-in...")
     while True:
@@ -158,53 +162,37 @@ def wait_for_ack():
                 content = f.read().strip()
             os.remove(ACK_FILE)
             parsed = parse_ack(content)
-            print(f"  Acknowledged: {parsed}")
 
-            if parsed["action"] != "end":
+            if parsed is None:
+                # parse_ack wrote a prompt asking Claude to fix and re-ack
+                print("  Waiting for corrected ack...")
+                continue
+
+            if "task_name" in parsed:
                 session = load_session()
                 session["current_task"] = parsed["task_name"]
                 session["current_task_type"] = parsed["task_type"]
+                if parsed["task_name"] not in session["session_log"]:
+                    session["session_log"][parsed["task_name"]] = {"hours": 0, "sessions": 0}
                 save_session(session)
-                print(f"  Task set to: {parsed['task_name']} ({parsed['task_type']})")
+                print(f"  Acknowledged: {parsed['action']} - {parsed['task_name']} ({parsed['task_type']})")
+            else:
+                print(f"  Acknowledged: {parsed['action']}")
 
             return parsed
         time.sleep(POLL_INTERVAL)
 
 
-def log_session(task_name, sessions=1):
-    if not task_name:
-        return
 
+def flush_session_log():
+    """Merge session_log into main log.yaml at end of session."""
+    session = load_session()
     log = load_log()
-    today = datetime.now().strftime('%Y-%m-%d')
-    minutes = sessions * WORK_MINUTES
 
-    if task_name not in log['projects']:
-        log['projects'][task_name] = {
-            'total_sessions': 0,
-            'total_minutes': 0,
-            'history': []
-        }
-
-    project = log['projects'][task_name]
-    project['total_sessions'] += sessions
-    project['total_minutes'] += minutes
-
-    today_entry = None
-    for entry in project['history']:
-        if entry['date'] == today:
-            today_entry = entry
-            break
-
-    if today_entry:
-        today_entry['sessions'] += sessions
-        today_entry['minutes'] += minutes
-    else:
-        project['history'].append({
-            'date': today,
-            'sessions': sessions,
-            'minutes': minutes
-        })
+    for task_name, data in session['session_log'].items():
+        project = log['projects'][task_name]
+        project['total_sessions'] += data['sessions']
+        project['total_hours'] = round(project['total_hours'] + data['hours'], 2)
 
     save_log(log)
 
@@ -218,6 +206,9 @@ def reset_session():
         'start_time': None,
         'suggest_end_after_hours': SUGGEST_END_AFTER_HOURS,
         'suggest_end_at_hour': SUGGEST_END_AT_HOUR,
+        'chore_timers': [],
+        'completed_items': [],
+        'session_log': {},
     }
     save_session(session)
 
@@ -227,6 +218,57 @@ def hours_elapsed(start_time_str):
         return 0
     start = datetime.fromisoformat(start_time_str)
     return (datetime.now() - start).total_seconds() / 3600
+
+
+def load_reminders():
+    if not os.path.exists(REMINDERS_FILE):
+        return []
+    with open(REMINDERS_FILE, 'r') as f:
+        data = yaml.safe_load(f)
+    return data.get('static_reminders', [])
+
+
+def check_due_items(session):
+    """Check for due chores and reminders. Returns list of due item names.
+
+    Sources:
+    - Chore timers from session.yaml (dynamic, set by Claude during session)
+    - Static reminders from reminders.yaml (recurring schedule)
+
+    Filters out items already in completed_items. Read-only — no saves.
+    """
+    completed = session.get('completed_items', [])
+    now = datetime.now()
+    due = []
+
+    # Chore timers
+    for chore in session.get('chore_timers', []):
+        if chore['name'] in completed:
+            continue
+        if now >= datetime.fromisoformat(chore['end_time']):
+            due.append(chore['name'])
+
+    # Static reminders
+    today_day = now.strftime('%a').lower()[:3]
+    current_time = now.strftime('%H:%M')
+    for reminder in load_reminders():
+        if reminder['name'] in completed:
+            continue
+        days = reminder.get('days', 'daily')
+        if days != 'daily' and today_day not in days:
+            continue
+        if current_time >= reminder['time']:
+            due.append(reminder['name'])
+
+    return due
+
+
+def due_items_text(due_items):
+    """Build a prompt snippet for due items (chores and reminders)."""
+    if not due_items:
+        return ""
+    names = ", ".join(due_items)
+    return f"\n\nDue items: {names}. Remind the user and ask if they've handled these."
 
 
 def countdown(minutes, label):
@@ -248,14 +290,26 @@ def work_phase(is_fun_task=False):
     session = load_session()
     task_name = session.get('current_task')
 
+    # Update session counters and session_log in one save
     if is_fun_task:
         session['fun_sessions_completed'] += 1
     else:
         session['work_sessions_completed'] += 1
+    session['session_log'][task_name]['hours'] = round(
+        session['session_log'][task_name]['hours'] + WORK_MINUTES / 60, 2)
+    session['session_log'][task_name]['sessions'] += 1
     save_session(session)
 
-    log_session(task_name)
-    write_pending_prompt(WORK_COMPLETE_PROMPT)
+    # Chore and reminder checks are read-only - no saves
+    prompt = WORK_COMPLETE_PROMPT
+    prompt += due_items_text(check_due_items(session))
+
+    if should_suggest_end(session):
+        elapsed = hours_elapsed(session.get('start_time'))
+        now = datetime.now().strftime('%H:%M')
+        prompt += f"\n\n{END_SESSION_PROMPT}\nSession duration so far: {elapsed:.1f} hours. Current time: {now}."
+
+    write_pending_prompt(prompt)
     print("WORK phase complete - prompt written")
 
     return wait_for_ack()
@@ -272,7 +326,9 @@ def should_suggest_end(session):
 
     if elapsed >= max_hours:
         return True
-    if datetime.now().hour >= end_at_hour:
+    now = datetime.now()
+    current_hour = now.hour + now.minute / 60
+    if current_hour >= end_at_hour:
         return True
     return False
 
@@ -285,13 +341,9 @@ def break_phase():
 
     session = load_session()
 
-    if should_suggest_end(session):
-        elapsed = hours_elapsed(session.get('start_time'))
-        now = datetime.now().strftime('%H:%M')
-        prompt = BREAK_COMPLETE_PROMPT + f"\n\n{END_SESSION_PROMPT}\nSession duration so far: {elapsed:.1f} hours. Current time: {now}."
-    else:
-        prompt = BREAK_COMPLETE_PROMPT
-
+    # Combine break complete prompt with any due items into a single prompt
+    due = check_due_items(session)
+    prompt = BREAK_COMPLETE_PROMPT + due_items_text(due)
     write_pending_prompt(prompt)
     print("BREAK phase complete - prompt written")
 
@@ -302,10 +354,8 @@ def main():
     # Check for notify-send
     if not shutil.which('notify-send'):
         print("Error: notify-send not found.")
-        print("Install libnotify (e.g., 'pacman -S libnotify' on Arch, 'apt install libnotify-bin' on Debian/Ubuntu)")
+        print("Install libnotify (e.g., 'pacman -S libnotify' on Arch)")
         return
-
-    ensure_data_dir()
 
     # Process ack file left by Claude at startup (sets initial task)
     with open(ACK_FILE, 'r') as f:
@@ -315,6 +365,8 @@ def main():
     session = load_session()
     session["current_task"] = parsed["task_name"]
     session["current_task_type"] = parsed["task_type"]
+    if parsed["task_name"] not in session["session_log"]:
+        session["session_log"][parsed["task_name"]] = {"hours": 0, "sessions": 0}
     save_session(session)
     print(f"  Initial task: {parsed['task_name']} ({parsed['task_type']})")
 
@@ -328,19 +380,19 @@ def main():
         session['suggest_end_at_hour'] = SUGGEST_END_AT_HOUR
     save_session(session)
 
-    print("=== Pomodoro Body Double ===")
+    print("Pomodoro started")
     print(f"Task: {session.get('current_task')}")
     print(f"Type: {session.get('current_task_type', 'work')}")
-    print(f"Work: {WORK_MINUTES} min | Break: {BREAK_MINUTES} min")
     print("---")
 
     def end_session():
         session = load_session()
         elapsed = hours_elapsed(session.get('start_time'))
-        print(f"\n=== Session Complete ===")
+        print(f"\nSession ended.")
         print(f"Duration: {elapsed:.1f} hours")
         print(f"Work sessions: {session['work_sessions_completed']}")
         print(f"Fun sessions: {session['fun_sessions_completed']}")
+        flush_session_log()
         reset_session()
 
     try:
