@@ -168,8 +168,10 @@ def wait_for_ack():
                 print("  Waiting for corrected ack...")
                 continue
 
+            session = load_session()
+            session["last_ack_time"] = datetime.now().isoformat()
+
             if "task_name" in parsed:
-                session = load_session()
                 session["current_task"] = parsed["task_name"]
                 session["current_task_type"] = parsed["task_type"]
                 if parsed["task_name"] not in session["session_log"]:
@@ -177,6 +179,7 @@ def wait_for_ack():
                 save_session(session)
                 print(f"  Acknowledged: {parsed['action']} - {parsed['task_name']} ({parsed['task_type']})")
             else:
+                save_session(session)
                 print(f"  Acknowledged: {parsed['action']}")
 
             return parsed
@@ -209,6 +212,7 @@ def reset_session():
         'chore_timers': [],
         'completed_items': [],
         'session_log': {},
+    'last_ack_time': None,
     }
     save_session(session)
 
@@ -283,22 +287,15 @@ def countdown(minutes, label):
 
 def work_phase(is_fun_task=False):
     """Run work timer, write prompt, wait for ack. Returns ack content."""
+    session = load_session()
+    work_started_at = session.get('last_ack_time')
+
     print("WORK phase started")
     countdown(WORK_MINUTES, "WORK")
     notify("Pomodoro", "Work session complete!")
 
     session = load_session()
     task_name = session.get('current_task')
-
-    # Update session counters and session_log in one save
-    if is_fun_task:
-        session['fun_sessions_completed'] += 1
-    else:
-        session['work_sessions_completed'] += 1
-    session['session_log'][task_name]['hours'] = round(
-        session['session_log'][task_name]['hours'] + WORK_MINUTES / 60, 2)
-    session['session_log'][task_name]['sessions'] += 1
-    save_session(session)
 
     # Chore and reminder checks are read-only - no saves
     prompt = WORK_COMPLETE_PROMPT
@@ -312,7 +309,24 @@ def work_phase(is_fun_task=False):
     write_pending_prompt(prompt)
     print("WORK phase complete - prompt written")
 
-    return wait_for_ack()
+    ack = wait_for_ack()
+
+    # Calculate real elapsed time (ack-to-ack: work start to break start)
+    started = datetime.fromisoformat(work_started_at)
+    elapsed_hours = (datetime.now() - started).total_seconds() / 3600
+
+    # Update session counters and session_log after ack
+    session = load_session()
+    if is_fun_task:
+        session['fun_sessions_completed'] += 1
+    else:
+        session['work_sessions_completed'] += 1
+    session['session_log'][task_name]['hours'] = round(
+        session['session_log'][task_name]['hours'] + elapsed_hours, 2)
+    session['session_log'][task_name]['sessions'] += 1
+    save_session(session)
+
+    return ack
 
 
 def should_suggest_end(session):
@@ -365,6 +379,7 @@ def main():
     session = load_session()
     session["current_task"] = parsed["task_name"]
     session["current_task_type"] = parsed["task_type"]
+    session["last_ack_time"] = datetime.now().isoformat()
     if parsed["task_name"] not in session["session_log"]:
         session["session_log"][parsed["task_name"]] = {"hours": 0, "sessions": 0}
     save_session(session)
