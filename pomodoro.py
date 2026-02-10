@@ -102,6 +102,7 @@ def parse_ack(content):
     Formats:
       'continue:task_name' - start next work phase with this task (used after breaks)
       'continue'           - proceed to break (used after work, keeps current task)
+      'extend'             - extend work phase (used when meeting is upcoming)
       'end'                - end session
 
     Task type is looked up from tasks.yaml. For new tasks, Claude must
@@ -112,6 +113,9 @@ def parse_ack(content):
 
     if content == "continue":
         return {"action": "continue"}
+
+    if content == "extend":
+        return {"action": "extend"}
 
     parts = content.split(":", 1)
     if len(parts) != 2 or not parts[1].strip():
@@ -210,6 +214,7 @@ def reset_session():
         'suggest_end_after_hours': SUGGEST_END_AFTER_HOURS,
         'suggest_end_at_hour': SUGGEST_END_AT_HOUR,
         'chore_timers': [],
+        'meetings': [],
         'completed_items': [],
         'session_log': {},
     'last_ack_time': None,
@@ -275,6 +280,19 @@ def due_items_text(due_items):
     return f"\n\nDue items: {names}. Remind the user and ask if they've handled these."
 
 
+def check_upcoming_meeting(session):
+    """Check if a meeting starts within 30 min. Returns (name, mins_away) or None."""
+    now = datetime.now()
+    for meeting in session.get('meetings', []):
+        if meeting['name'] in session.get('completed_items', []):
+            continue
+        start = datetime.fromisoformat(meeting['start_time'])
+        mins_away = (start - now).total_seconds() / 60
+        if 0 < mins_away <= 30:
+            return meeting['name'], mins_away
+    return None
+
+
 def countdown(minutes, label):
     """Display a countdown timer on a single line."""
     total_seconds = int(minutes * 60)
@@ -293,6 +311,26 @@ def work_phase(is_fun_task=False):
     print("WORK phase started")
     countdown(WORK_MINUTES, "WORK")
     notify("Pomodoro", "Work session complete!")
+
+    # Check for upcoming meetings before writing the break prompt
+    session = load_session()
+    meeting = check_upcoming_meeting(session)
+    if meeting:
+        name, mins_away = meeting
+        extend_mins = int(mins_away - BREAK_MINUTES)
+        if extend_mins > 0:
+            prompt = (f"Meeting '{name}' starts in {int(mins_away)} minutes. "
+                      f"Ask the user if they want to extend work by {extend_mins} more minutes "
+                      f"so there's still a {BREAK_MINUTES}-min break before it. "
+                      f"If yes, write 'extend' ack. If no, write 'continue' as normal.")
+            write_pending_prompt(prompt)
+            notify("Pomodoro", f"Meeting '{name}' in {int(mins_away)} min!")
+            print(f"  Meeting '{name}' in {int(mins_away)} min - prompt written")
+            ack = wait_for_ack()
+            if ack["action"] == "extend":
+                print(f"  Extending work by {extend_mins} min for meeting '{name}'")
+                countdown(extend_mins, f"EXTENDED ({name})")
+                notify("Pomodoro", "Extended work complete — break time before meeting!")
 
     session = load_session()
     task_name = session.get('current_task')
