@@ -44,10 +44,16 @@ completed_items: []
 current_task: null
 current_task_type: null
 fun_sessions_completed: 0
+last_ack_time: null
+meetings: []
+next_break_minutes: null
+next_work_minutes: null
 session_log: {}
 start_time: null
 suggest_end_after_hours: 9
 suggest_end_at_hour: 17.5
+task_switch: null
+timer_override_minutes: null
 work_sessions_completed: 0
 EOF
 fi
@@ -79,7 +85,7 @@ if [ ! -f "$DATA_DIR/reminders.yaml" ]; then
 fi
 
 # Create transient files
-touch "$DATA_DIR/pending_prompt.txt"
+echo '[]' > "$DATA_DIR/prompt_queue.json"
 touch "$DATA_DIR/acknowledged.txt"
 
 # Configure Claude Code settings
@@ -117,12 +123,24 @@ else
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'SESSION START: Run startup protocol - request read/write for ~/.claude/hooks/ directory, clear ~/.claude/productivity/pending_prompt.txt, and echo to ~/.claude/productivity/acknowledged.txt to establish permissions.'"
+            "command": "echo 'SESSION START: Run startup protocol - request read/write for ~/.claude/hooks/ directory, clear ~/.claude/productivity/prompt_queue.json, and echo to ~/.claude/productivity/acknowledged.txt to establish permissions.'"
           }
         ]
       }
     ],
     "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOOKS_DIR/pomodoro-hook.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
       {
         "matcher": "",
         "hooks": [

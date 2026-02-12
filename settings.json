@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'SESSION START: Run startup protocol - request read/write for ~/.claude/hooks/ directory, clear ~/.claude/productivity/pending_prompt.txt, and echo to ~/.claude/productivity/acknowledged.txt to establish permissions.'"
+            "command": "echo 'SESSION START: Run startup protocol - request read/write for ~/.claude/hooks/ directory, clear ~/.claude/productivity/prompt_queue.json, and echo to ~/.claude/productivity/acknowledged.txt to establish permissions.'"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/scratticus/.claude/hooks/pomodoro-hook.sh",
+            "command": "~/.claude/hooks/pomodoro-hook.sh",
             "timeout": 5
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/scratticus/.claude/hooks/pomodoro-hook.sh",
+            "command": "~/.claude/hooks/pomodoro-hook.sh",
             "timeout": 5
           }
         ]

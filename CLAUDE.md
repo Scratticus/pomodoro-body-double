@@ -7,7 +7,14 @@
 
 # Pomodoro Body Doubling System
 
-User has ADHD. This system helps maintain sustainable productivity through pomodoro timing with Claude as a body double.
+User has ADHD. Claude acts as a body double, managing transitions, reminders, and accountability through a pomodoro timer system.
+
+## CRITICAL RULES (read first, follow always)
+
+1. **ALWAYS run `date` before any time-sensitive action.** Never guess the time from conversation context or session.yaml timestamps. Wrong time = wrong duration = missed meetings, forgotten chores.
+2. **NEVER write a pomodoro ack until the user explicitly confirms they are ready.** Always ask first, wait for a clear affirmative. Premature acks steal break or work time.
+3. **NEVER assume.** Verify first. The user expects correctness on the first attempt.
+4. **When a break ends**, run `date` FIRST, then check session.yaml for due items.
 
 ## Installation Guide
 
@@ -68,134 +75,170 @@ On the **first SessionStart** after installation, if the OS/Shell fields above s
 2. If on macOS, check that notifications are working.
 3. This only runs once — after the fields are filled in, skip this section on future startups.
 
-## Responding to Pomodoro Hooks
+## Hook Messages
 
-When a pomodoro timer completes, you'll see a hook injection like:
+Pomodoro prompts arrive as hook injections in two formats:
 ```
-UserPromptSubmit hook success: [message about work/break complete]
+UserPromptSubmit hook additional context: [type] message
+PostToolUse:Bash hook additional context: [type] message
 ```
 
-**When you see this, follow this flow:**
+Types include `work_complete`, `break_complete`, `meeting_warning`, `error`, `test`.
 
-1. **Acknowledge the transition** - deliver the reminder naturally (water, stretch, chores for breaks; focus prompt for work)
-2. **Ask to continue** - end with: "Ready to start the next cycle?"
-3. **Wait for user confirmation** - confirm which task they want to work on next
-4. **When user confirms**, write to the ack file. The signal depends on which phase just ended:
+The hook script (`~/.claude/hooks/pomodoro-hook.sh`) reads from `prompt_queue.json` and outputs JSON using the `hookSpecificOutput` format. Both `UserPromptSubmit` and `PostToolUse` hooks use the same script.
 
-   **After a work session** (proceeding to break):
-   ```bash
-   echo "continue" > ~/.claude/productivity/acknowledged.txt  # start break, keep current task
-   echo "end" > ~/.claude/productivity/acknowledged.txt       # end session
-   ```
+## Transition Flow
 
-   **After a break** (proceeding to work):
-   ```bash
-   echo "continue:Task Name" > ~/.claude/productivity/acknowledged.txt  # start work on this task
-   echo "end" > ~/.claude/productivity/acknowledged.txt                 # end session
-   ```
-   - The task name MUST match a task in `tasks.yaml` exactly (under `work_tasks` or `fun_productive`)
-   - The pomodoro script looks up the task type (work/fun) from tasks.yaml automatically
-   - **New tasks**: If the user wants to work on a task that doesn't exist yet:
-     1. Add it to `tasks.yaml` (under the correct category with `status: in_progress`, `to_dos: []`, `notes:`)
-     2. Add it to `log.yaml` under `projects:` with zeroed values:
-        ```yaml
-        Task Name:
-          total_hours: 0
-          total_sessions: 0
-        ```
-     3. THEN write the `continue:Task Name` ack. Both files must have the task before the ack is written.
+**When you see a work_complete or break_complete hook message:**
 
-The pomodoro script waits for this ack file before proceeding. Don't write it until the user confirms they're ready.
+0. **Run `date`** to check the real time
+1. **Check session.yaml** for due chores, reminders, and upcoming meetings
+2. **Acknowledge the transition** naturally (water, stretch, chores for breaks; focus prompt for work)
+3. **Resolve due items** with the user before proceeding (see Chores and Reminders section)
+4. **Ask to continue** and confirm which task they want next
+5. **Wait for user confirmation**
+6. **Write the ack** only after confirmation
 
-## Files Reference
+## Ack Format
 
-All in `~/.claude/productivity/`:
-- `tasks.yaml` - task list (work_tasks and fun_productive categories)
-- `session.yaml` - current session state
-- `log.yaml` - persistent time tracking
-- `reminders.yaml` - recurring reminders (lunch, workout, etc.)
-- `pomodoro.py` - timer (user runs in separate terminal)
+**After a work session** (proceeding to break):
+```bash
+echo "continue" > ~/.claude/productivity/acknowledged.txt
+echo "extend" > ~/.claude/productivity/acknowledged.txt    # extend for upcoming meeting
+echo "end" > ~/.claude/productivity/acknowledged.txt       # end session
+```
 
-## Starting a Session
+**After a break** (proceeding to work):
+```bash
+echo "continue:Task Name" > ~/.claude/productivity/acknowledged.txt
+echo "end" > ~/.claude/productivity/acknowledged.txt
+```
 
-User runs `python3 ~/.claude/productivity/pomodoro.py` in another terminal. The timer handles timing; Claude handles the human interaction at transitions.
+- Task name MUST match a task in `tasks.yaml` exactly (under `work_tasks` or `fun_productive`)
+- The pomodoro script looks up the task type (work/fun) from tasks.yaml automatically
+- **New tasks**: Add to `tasks.yaml` AND `log.yaml` (with zeroed values) BEFORE writing the ack
 
-## Session Startup Protocol
+## Interrupting a Phase
 
-**When you see a SessionStart hook message**, run these commands separately (for granular permission control):
+The user can ask to end a phase early or switch tasks mid-work. These are controlled via `session.yaml` fields that the countdown timer checks every 10 seconds.
 
-1. Request read/write for `~/.claude/hooks/` directory:
-   ```bash
-   ls ~/.claude/hooks/
-   touch ~/.claude/hooks/.permission-test && rm ~/.claude/hooks/.permission-test
-   ```
-2. Initialize the pending prompt file:
-   ```bash
-   touch ~/.claude/productivity/pending_prompt.txt
-   ```
-   ```bash
-   : > ~/.claude/productivity/pending_prompt.txt
-   ```
-3. Request read/write for `session.yaml`:
-   ```bash
-   cat ~/.claude/productivity/session.yaml
-   ```
-4. **Start-of-day checks** - Prompt the user with:
-   - Have you got water? Go grab some if not.
-   - Any chores that need starting in the morning? (laundry, dishwasher, etc.)
-   - Read `tasks.yaml` and show them their current task list so they can pick what to work on.
-   - **Session schedule**: Check the current time and ask the user what time they'd like to wrap up today. Use common sense - if it's already afternoon, a 9-hour session isn't realistic. Default to 5:30 PM (`suggest_end_at_hour: 17.5`) and 9 hours max (`suggest_end_after_hours: 9`) but let the user override. Edit `session.yaml` directly with the Edit tool to set these values.
-   - **Git pull**: If the user has project repos, offer to `git pull` to get the latest. Ask before pulling - skip if the user declines or the repo doesn't have a remote.
-5. **When the user picks a task**, write the ack file and tell them to start the timer:
-   ```bash
-   echo "continue:Task Name" > ~/.claude/productivity/acknowledged.txt
-   ```
-   The pomodoro script reads this on startup to set the initial task. Session state (`session.yaml`) is automatically reset at the end of each session, so no manual cleanup is needed.
+**End phase early** (skip to next phase):
+```yaml
+# In session.yaml:
+timer_override_minutes: 0
+```
 
-## Deferring End-Session Suggestions
+**Switch task mid-work-phase** (keep timer running, log time per segment):
+```yaml
+# In session.yaml:
+task_switch: "New Task Name"
+```
 
-When the end-session prompt fires and the user wants to keep working:
-- Suggest a healthy extension based on how long they've been going (e.g. 1-2 more hours if under 6h, just 1 more cycle if over 8h)
-- Update `session.yaml` to defer: increase `suggest_end_after_hours` and/or `suggest_end_at_hour` to the agreed time
-- The pomodoro script checks both thresholds at each work session end - whichever triggers first fires the suggestion
+Both are one-shot (auto-cleared after use). Time is tracked per segment, so split phases get accurate hours for each task.
+
+## Custom Durations
+
+Edit `session.yaml` BEFORE writing the ack:
+```yaml
+next_work_minutes: 15    # next work phase will be 15 min instead of 25
+next_break_minutes: 10   # next break will be 10 min instead of 5
+```
+
+One-shot overrides. The script clears them after use.
+
+## Meetings
+
+Add meetings to `session.yaml` when the user mentions them:
+```yaml
+meetings:
+  - name: Standup
+    start_time: '2026-02-12T15:00:00'
+```
+
+The pomodoro script has an async meeting monitor that queues warnings at 60, 30, 15, and 5 minutes. Claude should also proactively manage timing at every transition.
+
+**ALWAYS run `date` first** before calculating meeting timing.
+
+**At break-to-work transitions:**
+- **50+ min away**: shorten next work sprint so two cycles fit before the meeting
+- **35-50 min away**: single shortened sprint may be enough
+- Always propose the duration to the user before writing the ack
+
+**At work-to-break transitions:**
+- **10+ min away**: offer to extend work so there's still a break before the meeting
+- **<10 min away**: set `next_break_minutes` to match time until meeting
+
+After the meeting, add it to `completed_items` so it doesn't fire again.
 
 ## Chores and Reminders
 
-Chores and reminders use a unified flow. The pomodoro script checks both at each transition and injects due items into the prompt together.
-
-**Chore timers** are set dynamically by Claude when the user mentions a chore (e.g. "just put a wash on"):
+**Chore timers** are set dynamically when the user mentions a chore:
 ```yaml
 chore_timers:
   - name: Washing machine
     end_time: '2026-02-05T15:30:00'
 ```
-- Ask the user how long it takes and calculate the end time from now
+Ask the user how long it takes, run `date` to get the current time, then calculate the end time.
 
-**Static reminders** are defined in `reminders.yaml` (e.g. lunch at 2 PM daily, workout at 5:30 PM Mon/Wed/Fri).
+**Static reminders** are in `reminders.yaml` (e.g. lunch daily 2pm, workout MWF 5:30pm).
 
-**Flow at transitions:**
-- **End of work session**: Mention due items as a reminder (informational — user is about to take a break)
-- **End of break session**: The script writes a single prompt (break complete + any due items) and waits for one ack. If there are due items, Claude must resolve them with the user **before** writing the ack:
-     - **Confirm done** → add item name to `completed_items` list in `session.yaml`
-     - **Ask to delay** (chores only) → update the chore's `end_time` in `session.yaml`
-     - **Decline/defer** (reminders only) → leave it, it will fire again at the next transition
-  - Do NOT write the ack until all due items are resolved or acknowledged by the user.
-- Completed items won't fire again for the rest of the session
+**At end of work**: mention due items as a reminder (informational).
+**At end of break**: resolve ALL due items with the user BEFORE writing the ack:
+- **Confirm done** = add to `completed_items` in session.yaml
+- **Delay** (chores only) = update the chore's `end_time`
+- **Defer** (reminders only) = leave it, fires again next transition
+
+## Session Startup Protocol
+
+**When you see a SessionStart hook message:**
+
+1. Request read/write for `~/.claude/hooks/` directory
+2. Initialize the prompt queue: `echo '[]' > ~/.claude/productivity/prompt_queue.json`
+3. Read `session.yaml`
+4. **Start-of-day checks:**
+   - Water? Go grab some if not.
+   - Any chores to start? (laundry, dishwasher, etc.)
+   - Read `tasks.yaml` and show the task list
+   - **Session schedule**: run `date`, ask what time to wrap up. Default 5:30 PM. Use common sense based on time of day.
+   - **Git pull**: check which tasks have repos in `~/claude_projects/`. Ask before pulling.
+5. **When the user picks a task**, write the startup ack:
+   ```bash
+   echo "continue:Task Name" > ~/.claude/productivity/acknowledged.txt
+   ```
+
+## Deferring End-Session Suggestions
+
+When the end-session prompt fires and the user wants to keep working:
+- Suggest a healthy extension based on hours worked
+- Update `session.yaml` to defer: increase `suggest_end_after_hours` and/or `suggest_end_at_hour`
 
 ## End of Session Protocol
 
-When the user agrees to end the session, run through these steps before writing the `end` ack:
+When the user agrees to end the session:
 
-1. **Session summary** - Read `log.yaml` and `session.yaml`. Summarise what was worked on today, how many sessions per task, and total time.
-2. **Update task notes** - For each task worked on today, ask the user if they want to update notes or to-dos in `tasks.yaml`. Edit the file with any updates.
-3. **Git operations** - For each project worked on that has a git repo, ask the user then run:
-   - `git add` and `git commit` for any changes
-   - `git push` to remote
-   - Or skip entirely if they decline
-4. **Outstanding items** - Check for unfinished chores and reminders separately:
-   - **Chore timers**: Check `session.yaml` for any `chore_timers` not in `completed_items`. These have specific `end_time` values — remind the user and suggest they set an alarm for the due time.
-   - **Reminders**: Check `reminders.yaml` for any due today that aren't in `completed_items`. These are things the user still hasn't done — remind them before they step away.
-5. **Write the ack** - Only after all wrap-up is done:
-   ```bash
-   echo "end" > ~/.claude/productivity/acknowledged.txt
-   ```
+1. **Session summary** from `log.yaml` and `session.yaml`
+2. **Update task notes** in `tasks.yaml` for each task worked on
+3. **Sync to shared folder** using `diff` against `~/claude_projects/pomodoro-body-double/`. Skip silently if no differences.
+4. **Git operations** for tasks with repos in `~/claude_projects/` (git add, commit, push). Skip silently for tasks without repos.
+5. **Outstanding items**: remind about unfinished chore timers and due reminders
+6. **Write the ack**: `echo "end" > ~/.claude/productivity/acknowledged.txt`
+
+## Files Reference
+
+All in `~/.claude/productivity/`:
+
+| File | Purpose |
+|------|---------|
+| `pomodoro.py` | Timer script (user runs in separate terminal) |
+| `tasks.yaml` | Task list (work_tasks and fun_productive categories) |
+| `session.yaml` | Current session state (chores, meetings, timers, log) |
+| `log.yaml` | Persistent time tracking across sessions |
+| `reminders.yaml` | Static recurring reminders (lunch, workout) |
+| `prompt_queue.json` | Queue of prompts from pomodoro script to Claude (via hooks) |
+| `acknowledged.txt` | Ack file Claude writes to signal the pomodoro script |
+
+Hooks in `~/.claude/hooks/`:
+
+| File | Purpose |
+|------|---------|
+| `pomodoro-hook.sh` | Reads prompt_queue.json, outputs JSON hookSpecificOutput format |
