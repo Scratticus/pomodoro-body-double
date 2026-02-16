@@ -6,79 +6,21 @@ An ADHD-friendly productivity system that uses [Claude Code](https://github.com/
 
 ## The Problem
 
-If you have ADHD, you already know. You can hyperfocus for eight hours and forget to eat, or you can stare at a screen for two hours and accomplish nothing. You forget the laundry in the machine. You miss meetings because you lost track of time. You know you should take breaks but you either skip them entirely or never come back from them.
-
-Traditional pomodoro timers help with the timing, but they don't help with the hardest part. Having someone there to keep you accountable, remind you about the things you'll forget, and gently pull you back when you drift.
+If you have ADHD, you already know. You can hyperfocus for eight hours and forget to eat, or you can stare at a screen for two hours and accomplish nothing. Traditional pomodoro timers help with the timing, but they don't help with the hardest part: having someone there to keep you accountable, gently pull you back when you drift, and remember the things you've asked them to remind you about.
 
 ## What This Does
 
-This system turns Claude Code into a body double that sits alongside you while you work. It manages your time, remembers things you'll forget, and keeps you moving without being annoying about it.
+This system turns Claude Code into a body double that sits alongside you while you work. A Python timer runs in a separate terminal, cycling between work and break phases. At each transition, Claude checks in and helps you decide what to do next.
 
-### Structured work/break cycles
-25 minute work sessions, 5 minute breaks. The timer runs in a separate terminal with a visual countdown. When a phase ends, you get a desktop notification with sound, and Claude checks in at your next message. No interruptions mid-flow.
+- **Work/break cycles** with configurable durations (25/5 minutes by default, adjustable per phase)
+- **Chore timers and recurring reminders** that surface at transitions so nothing gets forgotten
+- **Meeting awareness** with advance warnings and automatic timing adjustments
+- **Task tracking** across work and fun/productive categories with per-task time logging so you can see where your hours actually go
+- **Mid-phase flexibility** to end early, switch tasks, or override the timer at any point
+- **End-of-session wrap-up** with summary, task notes, git operations, and outstanding items
+- **Gentle session limits** that suggest wrapping up, deferrable if you want to keep going
 
-### Transition reminders that actually help
-At the end of every work session, Claude reminds you to drink water, stand up, and stretch. Simple, but surprisingly effective when someone actually says it to you rather than a notification you dismiss.
-
-### Chore and errand tracking
-Tell Claude "I just put a wash on, 40 minutes" and it sets a timer. When the laundry is done, it reminds you at the next transition. No more laundry sitting in the machine for three hours because you forgot. Works for anything with a timer.
-
-### Recurring reminders
-Set up daily or weekly reminders in a simple YAML file. Lunch at 2pm every day. Workout at 5:30pm on Monday, Wednesday, Friday. Medication reminders. Whatever you need. They show up at transitions so they don't break your focus, but they don't get lost either.
-
-### Meeting awareness
-Add meetings to your session and the system monitors them. It warns you at 60, 30, 15, and 5 minutes out. At transitions near a meeting, Claude proactively adjusts timing so you get a proper break before the meeting starts rather than working right up to the last second and arriving flustered.
-
-### Task tracking with time logging
-Keep a list of tasks (work and fun/productive categories). Claude handles switching between them at each transition. Time is logged per task per session and across sessions, so you can see where your hours actually go.
-
-### Mid-phase flexibility
-Need to end a work session early? Switch tasks without stopping the timer? Custom duration for the next sprint because you've got a meeting in 20 minutes? All supported. The system adapts to your day rather than forcing you into rigid blocks.
-
-### End-of-session wrap-up
-When you're done for the day, Claude walks you through: session summary, updating task notes, git commits for any code you worked on, and a check for outstanding chores or reminders. Nothing falls through the cracks.
-
-### Gentle session limits
-Set a target end time or maximum hours. When you hit the threshold, Claude gently suggests wrapping up. You can defer it, but it keeps asking. Prevents the "I'll just do one more thing" that turns into three extra hours.
-
-## How It Works
-
-The system has three parts:
-
-1. **`pomodoro.py`** - A timer state machine that runs work/break cycles. At each transition it queues a prompt and waits for acknowledgment.
-2. **Hook script** - Claude Code hooks (`UserPromptSubmit` and `PostToolUse`) that inject queued prompts into your conversation. Uses JSON `hookSpecificOutput` format so prompts surface reliably during active work, not just when you type.
-3. **`CLAUDE.md`** - Instructions that tell Claude how to handle transitions, manage tasks, resolve chore/reminder blockers, and interact with the ack file.
-
-### The Interaction Loop
-
-1. Timer completes a phase, queues a prompt to `prompt_queue.json`, sends a desktop notification
-2. User messages Claude (about anything) or Claude uses a tool, the hook injects the prompt
-3. Claude delivers the reminder and asks what task to work on next
-4. User confirms, Claude writes `continue:Task Name` to `acknowledged.txt`
-5. Timer picks up the ack, updates session state, starts next phase
-
-### Task Categories
-
-Tasks live in `tasks.yaml` under two categories:
-- **`work_tasks`** - Main productive work
-- **`fun_productive`** - Side projects, creative work, learning
-
-Claude handles switching between tasks at each transition. Time is logged per task.
-
-### Chores and Reminders
-
-- **Chore timers**: Set dynamically during a session (e.g. "put a wash on, 40 minutes"). Claude adds them to `session.yaml` with an `end_time`. When due, they appear as reminders at transitions.
-- **Static reminders**: Defined in `reminders.yaml` with day-of-week schedules (e.g. lunch daily at 2 PM, workout Mon/Wed/Fri at 5:30 PM).
-- At the end of a **work session**, due items are mentioned informally (you're about to take a break anyway).
-- At the end of a **break**, due items are **blockers**. Claude won't start the next work phase until each is resolved (done, delayed, or deferred).
-
-### End-of-Session
-
-When you wrap up, Claude runs through:
-1. Session summary (tasks worked on, time per task)
-2. Task notes update (to-dos, status)
-3. Git operations (commit/push if desired)
-4. Outstanding chore/reminder check
+Multiple reminders, chores, and meeting warnings can fire at the same transition. Claude prioritises them, treating some as blockers that need resolving before the next work phase and others as passive mentions.
 
 ## Platform
 
@@ -93,6 +35,7 @@ Built and tested on **Linux** (Arch/CachyOS) with **Bash**. Should work on any L
   - Debian/Ubuntu: `apt install libnotify-bin`
   - Fedora: `dnf install libnotify`
   - macOS: not supported natively, see Platform note above
+- Git authenticated in your terminal (if you want end-of-session git operations)
 
 ## Installation
 
@@ -142,7 +85,7 @@ The installer will:
 
 2. **If you already had a `settings.json`**, see the Manual Hook Setup section below to add the hooks yourself.
 
-3. **Restart Claude Code.** On startup, you should see a `SessionStart` hook message. Claude will greet you with the startup protocol and walk you through:
+3. **Restart Claude Code.** The `SessionStart` hook fires automatically on launch, but Claude won't act on it until you send your first message. Just say hello or good morning and Claude will run the startup protocol, walking you through:
    - Setting up your first tasks
    - Configuring reminders (lunch, workout, medication, etc.)
    - Choosing a session schedule
@@ -200,10 +143,6 @@ If you already have a `settings.json` and the installer couldn't configure hooks
 }
 ```
 
-- **SessionStart** triggers Claude's startup protocol (hydration check, task selection, schedule planning)
-- **UserPromptSubmit** injects pomodoro prompts when you send a message
-- **PostToolUse** injects prompts while Claude is actively working (so you don't miss transitions during long tool operations)
-
 ### Manual Installation (without install.sh)
 
 If you prefer to set things up yourself:
@@ -232,17 +171,43 @@ If you prefer to set things up yourself:
 
 5. Edit `~/.claude/productivity/reminders.yaml` with your personal reminders
 
-6. Restart Claude Code and follow the startup protocol
+6. Restart Claude Code and send a message to trigger the startup protocol
 
 ## Usage
 
-1. Start Claude Code. On first run it will greet you with the startup protocol and help set up tasks.
-2. Pick a task and agree on a schedule.
-3. Start the timer in a separate terminal:
-   ```bash
-   python3 ~/.claude/productivity/pomodoro.py
-   ```
-4. Work as normal. When a phase ends you'll hear a notification and Claude will check in at your next message.
+### Starting a Session
+
+When you open Claude Code, a `SessionStart` hook fires and injects a startup message into the conversation. Send any message (even just "hello") to kick things off. Claude will ask you to grant file access to the hooks and productivity directories it needs, then walk you through the start of day routine:
+
+- Hydration check
+- Any chores to start (laundry, dishwasher, etc.) with timers
+- Logging any meetings or one-off reminders for the day
+- Reviewing your task list and picking what to work on
+
+Once you've chosen a task, start the timer in a separate terminal:
+
+```bash
+python3 ~/.claude/productivity/pomodoro.py
+```
+
+### Working
+
+Work as normal with Claude. The timer runs independently and doesn't interrupt you mid-flow. When a phase ends you'll get a desktop notification and Claude checks in the next time you interact with it.
+
+At the end of a **work phase**, Claude mentions any due reminders or chores passively and suggests a break. At the end of a **break phase**, any due items become blockers that need resolving (confirmed done, delayed, or deferred) before the next work session starts. This keeps things honest without being disruptive during focused work.
+
+If you finish a task early, just tell Claude. It will log the time for that task, switch you to whatever you want to work on next, and both tasks get accurate time tracking for the session.
+
+### Customising Timers
+
+Work and break durations default to 25 and 5 minutes. You can change the defaults by editing the constants at the top of `pomodoro.py`:
+
+```python
+WORK_MINUTES = 25
+BREAK_MINUTES = 5
+```
+
+You can also ask Claude to set a custom duration for the next phase at any transition, or interrupt the current phase early. These are one-shot overrides managed through `session.yaml`.
 
 ### Customising Reminders
 
@@ -255,20 +220,52 @@ static_reminders:
     days: daily
 
   - name: Workout
-    time: "17:30"
+    time: "17:00"
     days: [mon, wed, fri]
 ```
 
-### Customising Timers
+### Ending a Session
 
-Edit the constants at the top of `~/.claude/productivity/pomodoro.py`:
+When you're done for the day (or when the gentle session limit fires), Claude runs through an end of session protocol: session summary with time per task, updating task notes and to-dos, git commit and push for any repos you worked on, and a final check for outstanding chores or reminders.
 
-```python
-WORK_MINUTES = 25
-BREAK_MINUTES = 5
-```
+## How It Works
 
-Or ask Claude to set a custom duration for the next phase (one-shot override via `session.yaml`).
+### Architecture
+
+The system has three parts:
+
+1. **`pomodoro.py`** - A timer state machine running in a separate terminal. It manages work/break cycles, displays a visual countdown, monitors meeting times, and handles task switching. At each transition it writes a prompt to `prompt_queue.json` and waits for Claude to acknowledge by writing to `acknowledged.txt`.
+
+2. **Hook script** - Claude Code supports hooks that run shell commands on specific events. This system uses two hook events to inject pomodoro prompts into the conversation:
+   - **`UserPromptSubmit`** fires every time you send a message. The hook script checks `prompt_queue.json` and, if there's a queued prompt, injects it as additional context alongside your message using JSON `hookSpecificOutput` format.
+   - **`PostToolUse`** fires every time Claude runs a tool (bash commands, file reads, etc.). This means prompts can surface even during long stretches of autonomous work where you haven't typed anything.
+
+   A third hook, **`SessionStart`**, fires when Claude Code launches and injects the startup message that triggers the start of day routine.
+
+3. **`CLAUDE.md`** - The instruction file that tells Claude how to behave. It defines the transition flow, ack format, task management, chore/reminder logic, meeting timing calculations, and the start/end of session protocols.
+
+### The Interaction Loop
+
+1. **Initialisation**: User opens Claude Code, sends a first message. The `SessionStart` hook injects the startup prompt. Claude requests file permissions, runs the start of day checks, and writes the first ack to start the timer.
+2. **Work phase**: Timer counts down. User works with Claude normally. No interruptions.
+3. **Transition**: Timer completes, queues a prompt to `prompt_queue.json`, sends a desktop notification. The next `UserPromptSubmit` or `PostToolUse` hook picks up the queued prompt and injects it into the conversation.
+4. **Check-in**: Claude acknowledges the transition, mentions any due reminders or chores, and asks what to do next.
+5. **Confirmation**: User confirms the next task (or finishes early, switches task, adjusts timing). Claude writes the ack to `acknowledged.txt`.
+6. **Next phase**: Timer picks up the ack, updates session state, starts the next phase. Back to step 2.
+
+### Multiple Items at a Transition
+
+Several things can be due at the same transition: chore timers, recurring reminders, and meeting warnings. Claude handles them all as a list, prioritising by urgency. At the end of a work phase these are mentioned passively. At the end of a break they're blockers. Each item is resolved individually (done, delayed, deferred) before the next work phase begins.
+
+### Task Switching and Early Completion
+
+You can tell Claude you're done with a task early or want to switch to something else mid-phase. The timer keeps running but the session log records time per segment, so both tasks get accurate hours. You can also ask Claude to end the current phase immediately or set a custom duration for the next one.
+
+### Time Tracking
+
+Time is measured from ack to ack. When you confirm a task and Claude writes the acknowledgment, the timer starts. When the next transition fires and you confirm again, that interval is logged against the task you were working on. This means tracked time reflects actual confirmed work, not just timer countdowns.
+
+`session.yaml` tracks hours and session counts per task for the current day. `log.yaml` accumulates totals across sessions, so you can see how much time you've put into each project over days and weeks. If you switch tasks mid-phase, the time is split proportionally and each task gets its own accurate segment. At the end of a session, Claude reads both files to give you a summary of what you worked on and for how long.
 
 ## Files
 
@@ -288,10 +285,19 @@ Or ask Claude to set a custom duration for the next phase (one-shot override via
 - `prompt_queue.json` - Prompt queue for hook injection (transient)
 - `acknowledged.txt` - Acknowledgment signal (transient)
 
+## Roadmap
+
+No dates, just things we'd like to build next:
+
+- **Calendar integration** to pull meetings automatically instead of adding them manually
+- **Priority tracking** to surface tasks that haven't had enough attention and nudge toward balanced progress
+- **Improved installation** with broader testing across different setups and OS configurations
+- **macOS notification support** using `terminal-notifier` or `osascript`
+
 ## Why
 
-For people with ADHD who oscillate between hyperfocused burnout and unproductive stress. The goal is sustainable, enjoyable productivity with gentle external structure and a sense of working alongside someone who remembers the things you forget.
+For people with ADHD who oscillate between hyperfocused burnout and unproductive stress. The goal is sustainable, enjoyable productivity with gentle external structure and a sense of working alongside someone who remembers what you've asked it to.
 
 ## License
 
-MIT
+GPL-3.0. See [LICENSE](LICENSE) for details.
