@@ -1,0 +1,13 @@
+# Persistent chore timers
+# Lives at ~/.claude/productivity/chore_timers.yaml
+# Survives session resets - timers are removed when marked done, not when sessions end.
+#
+# Claude adds entries here when the user mentions a chore.
+# When the user confirms a chore is done, Claude removes the entry entirely.
+# When the user delays a chore, Claude updates the end_time.
+
+chore_timers:
+  - name: Washing machine
+    end_time: '2026-02-05T15:30:00'
+  - name: Dishwasher
+    end_time: '2026-02-05T16:00:00'

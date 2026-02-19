@@ -1,9 +1,7 @@
 # User Environment
 
-<!-- Claude: update this section on first run. See First-Run Setup below. -->
-- **OS**: (not set)
-- **Shell**: (not set)
-- **Installed**: false
+- **OS**: Arch Linux (CachyOS distribution)
+- **Shell scripts**: Always use Unix (LF) line endings
 
 # Pomodoro Body Doubling System
 
@@ -13,67 +11,8 @@ User has ADHD. Claude acts as a body double, managing transitions, reminders, an
 
 1. **ALWAYS run `date` before any time-sensitive action.** Never guess the time from conversation context or session.yaml timestamps. Wrong time = wrong duration = missed meetings, forgotten chores.
 2. **NEVER write a pomodoro ack until the user explicitly confirms they are ready.** Always ask first, wait for a clear affirmative. Premature acks steal break or work time.
-3. **NEVER assume.** Verify first. The user expects correctness on the first attempt.
-4. **When a break ends**, run `date` FIRST, then check session.yaml for due items.
-
-## Installation Guide
-
-**Claude: check the `Installed` field above. If it says `false`, walk the user through installation before anything else.**
-
-When a new user opens Claude Code in the repo directory, guide them through setup:
-
-1. **Check dependencies**:
-   ```bash
-   python3 --version
-   pip show pyyaml || pip3 show pyyaml
-   which notify-send
-   ```
-   - If Python 3 is missing, help them install it for their OS
-   - If PyYAML is missing: `pip install pyyaml` (or `pip3 install pyyaml`)
-   - If `notify-send` is missing:
-     - Linux (Arch): `sudo pacman -S libnotify`
-     - Linux (Debian/Ubuntu): `sudo apt install libnotify-bin`
-     - Linux (Fedora): `sudo dnf install libnotify`
-     - macOS: `notify-send` is not available. Warn the user that notifications won't work out of the box. Suggest `brew install terminal-notifier` and offer to adapt the `notify()` function in `pomodoro.py` to use it.
-
-2. **Run the installer**:
-   ```bash
-   ./install.sh
-   ```
-   This copies files to `~/.claude/` and sets up hooks. Walk the user through any warnings it prints (e.g. existing settings.json, existing CLAUDE.md).
-
-3. **If the installer reported a CLAUDE.md conflict** (user already has `~/.claude/CLAUDE.md`):
-   - The pomodoro CLAUDE.md was saved to `~/.claude/CLAUDE.pomodoro.md`
-   - Help the user merge the pomodoro instructions into their existing CLAUDE.md
-   - The entire content of this file (from "# User Environment" onwards) needs to be in their active CLAUDE.md
-
-4. **Detect environment** and update the User Environment section at the top of the **installed** CLAUDE.md (at `~/.claude/CLAUDE.md`, not the repo copy):
-   ```bash
-   uname -s  # Linux, Darwin, etc.
-   echo $SHELL
-   ```
-   Ask the user to confirm or correct the detected values.
-
-5. **Set up reminders** — Edit `~/.claude/productivity/reminders.yaml` with the user. Ask them:
-   - Do you have a regular lunch time?
-   - Any recurring commitments (workout, meetings, medication, etc.)?
-   - What days and times for each?
-
-6. **Set up first tasks** — Edit `~/.claude/productivity/tasks.yaml`. Ask the user:
-   - What are you working on right now? (goes under `work_tasks`)
-   - Any side projects or fun productive things? (goes under `fun_productive`)
-
-7. **Verify the hook** — Ask the user to restart Claude Code. On restart, they should see a SessionStart hook message. If they do, installation is complete.
-
-8. **Mark as installed** — Update the `Installed` field at the top of the installed CLAUDE.md to `true`. This section won't run again.
-
-## First-Run Setup
-
-On the **first SessionStart** after installation, if the OS/Shell fields above say "(not set)", run through this quick init:
-
-1. Detect the user's OS and shell and update the fields at the top of this file.
-2. If on macOS, check that notifications are working.
-3. This only runs once — after the fields are filled in, skip this section on future startups.
+3. **NEVER assume.** Verify first. The user is an engineer who expects correctness on the first attempt.
+4. **When a break ends**, run `date` FIRST, then check session.yaml for due items. This was got wrong 2026-02-10 and laundry sat for an hour.
 
 ## Hook Messages
 
@@ -92,7 +31,7 @@ The hook script (`~/.claude/hooks/pomodoro-hook.sh`) reads from `prompt_queue.js
 **When you see a work_complete or break_complete hook message:**
 
 0. **Run `date`** to check the real time
-1. **Check session.yaml** for due chores, reminders, and upcoming meetings
+1. **Check session.yaml and chore_timers.yaml** for due chores, reminders, and upcoming meetings
 2. **Acknowledge the transition** naturally (water, stretch, chores for breaks; focus prompt for work)
 3. **Resolve due items** with the user before proceeding (see Chores and Reminders section)
 4. **Ask to continue** and confirm which task they want next
@@ -136,6 +75,28 @@ task_switch: "New Task Name"
 
 Both are one-shot (auto-cleared after use). Time is tracked per segment, so split phases get accurate hours for each task.
 
+## Ack Reminders
+
+While waiting for an ack, the pomodoro script re-sends a desktop notification periodically. Controlled via `session.yaml`:
+
+```yaml
+reminder_enabled: true        # toggle reminders on/off
+reminder_interval_minutes: 5  # how often to re-notify (default 5)
+```
+
+- **Toggle off:** set `reminder_enabled: false` to silence reminders entirely
+- **Change frequency:** set `reminder_interval_minutes` to desired value
+- **To silence for a while:** use `extend` instead. It runs a real countdown and suppresses reminders during it.
+
+## Extend
+
+`extend` works in all four states (work running, work ended, break running, break ended):
+
+- **Phase running:** set `extend_minutes: N` in session.yaml. Countdown loop picks it up within 10s and adds time. One-shot, auto-cleared.
+- **Phase ended (waiting for ack):** write `extend` ack. Work extends to more work, break extends to more break. Duration from `next_work_minutes` / `next_break_minutes` (default 25/5).
+
+**Autonomous extend:** when the user says "let's finish X before the break", estimate how long X will take and set `extend_minutes: N` in session.yaml without being asked. Do NOT write the break ack autonomously. Starting any new phase (work or break) always requires explicit user confirmation first.
+
 ## Custom Durations
 
 Edit `session.yaml` BEFORE writing the ack:
@@ -172,20 +133,21 @@ After the meeting, add it to `completed_items` so it doesn't fire again.
 
 ## Chores and Reminders
 
-**Chore timers** are set dynamically when the user mentions a chore:
+**Chore timers** are set dynamically when the user mentions a chore. They live in `chore_timers.yaml` (persists across sessions and resets):
 ```yaml
 chore_timers:
   - name: Washing machine
     end_time: '2026-02-05T15:30:00'
 ```
-Ask the user how long it takes, run `date` to get the current time, then calculate the end time.
+Ask the user how long it takes, run `date` to get the current time, then calculate the end time. Add to `chore_timers.yaml`, NOT session.yaml.
 
 **Static reminders** are in `reminders.yaml` (e.g. lunch daily 2pm, workout MWF 5:30pm).
 
 **At end of work**: mention due items as a reminder (informational).
 **At end of break**: resolve ALL due items with the user BEFORE writing the ack:
-- **Confirm done** = add to `completed_items` in session.yaml
-- **Delay** (chores only) = update the chore's `end_time`
+- **Confirm done (chores)** = remove the entry from `chore_timers.yaml`
+- **Delay** (chores only) = update the chore's `end_time` in `chore_timers.yaml`
+- **Confirm done (meetings/reminders)** = add to `completed_items` in session.yaml
 - **Defer** (reminders only) = leave it, fires again next transition
 
 ## Session Startup Protocol
@@ -220,7 +182,7 @@ When the user agrees to end the session:
 2. **Update task notes** in `tasks.yaml` for each task worked on
 3. **Sync to shared folder** using `diff` against `~/claude_projects/pomodoro-body-double/`. Skip silently if no differences.
 4. **Git operations** for tasks with repos in `~/claude_projects/` (git add, commit, push). Skip silently for tasks without repos.
-5. **Outstanding items**: remind about unfinished chore timers and due reminders
+5. **Outstanding items**: remind about unfinished chore timers (`chore_timers.yaml`) and due reminders
 6. **Write the ack**: `echo "end" > ~/.claude/productivity/acknowledged.txt`
 
 ## Files Reference
@@ -231,7 +193,8 @@ All in `~/.claude/productivity/`:
 |------|---------|
 | `pomodoro.py` | Timer script (user runs in separate terminal) |
 | `tasks.yaml` | Task list (work_tasks and fun_productive categories) |
-| `session.yaml` | Current session state (chores, meetings, timers, log) |
+| `session.yaml` | Current session state (meetings, timers, log) |
+| `chore_timers.yaml` | Persistent chore timers (survives session resets) |
 | `log.yaml` | Persistent time tracking across sessions |
 | `reminders.yaml` | Static recurring reminders (lunch, workout) |
 | `prompt_queue.json` | Queue of prompts from pomodoro script to Claude (via hooks) |

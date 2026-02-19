@@ -38,6 +38,7 @@ SESSION_FILE = os.path.expanduser("~/.claude/productivity/session.yaml")
 LOG_FILE = os.path.expanduser("~/.claude/productivity/log.yaml")
 TASKS_FILE = os.path.expanduser("~/.claude/productivity/tasks.yaml")
 REMINDERS_FILE = os.path.expanduser("~/.claude/productivity/reminders.yaml")
+CHORE_TIMERS_FILE = os.path.expanduser("~/.claude/productivity/chore_timers.yaml")
 QUEUE_FILE = os.path.expanduser("~/.claude/productivity/prompt_queue.json")
 ACK_FILE = os.path.expanduser("~/.claude/productivity/acknowledged.txt")
 
@@ -155,7 +156,8 @@ def parse_ack(content):
     Formats:
       'continue:task_name' - start next work phase with this task (used after breaks)
       'continue'           - proceed to break (used after work, keeps current task)
-      'extend'             - extend work phase (used when meeting is upcoming)
+      'extend'             - extend current phase type: work extends work, break extends break.
+                             Duration read from next_work_minutes / next_break_minutes (default 25/5).
       'end'                - end session
     """
     if content == "end":
@@ -203,10 +205,21 @@ def parse_ack(content):
     return {"action": parts[0], "task_name": task_name, "task_type": task_type}
 
 
+REMINDER_INTERVAL_DEFAULT = 300  # Default: re-send notification every 5 minutes
+
+
 async def wait_for_ack():
     """Block until ack file appears, parse content, then clear it."""
     print("  Waiting for check-in...")
+    last_reminder_time = asyncio.get_event_loop().time()
     while True:
+        now = asyncio.get_event_loop().time()
+        session = load_session()
+        reminder_enabled = session.get('reminder_enabled', True)
+        reminder_interval = session.get('reminder_interval_minutes', REMINDER_INTERVAL_DEFAULT / 60) * 60
+        if reminder_enabled and now - last_reminder_time >= reminder_interval:
+            notify("Pomodoro", "Still waiting for you!")
+            last_reminder_time = now
         if os.path.exists(ACK_FILE) and os.path.getsize(ACK_FILE) > 0:
             with open(ACK_FILE, 'r') as f:
                 content = f.read().strip()
@@ -257,7 +270,6 @@ def reset_session():
         'start_time': None,
         'suggest_end_after_hours': SUGGEST_END_AFTER_HOURS,
         'suggest_end_at_hour': SUGGEST_END_AT_HOUR,
-        'chore_timers': [],
         'meetings': [],
         'completed_items': [],
         'session_log': {},
@@ -265,6 +277,7 @@ def reset_session():
         'next_work_minutes': None,
         'next_break_minutes': None,
         'timer_override_minutes': None,
+        'extend_minutes': None,
         'task_switch': None,
     }
     save_session(session)
@@ -286,15 +299,35 @@ def load_reminders():
     return data.get('static_reminders', [])
 
 
+def load_chore_timers():
+    """Load chore timers from persistent chore_timers.yaml."""
+    if not os.path.exists(CHORE_TIMERS_FILE):
+        return []
+    with open(CHORE_TIMERS_FILE, 'r') as f:
+        data = yaml.safe_load(f) or {}
+    return data.get('chore_timers', [])
+
+
+def save_chore_timers(timers):
+    """Write chore timers to persistent chore_timers.yaml."""
+    tmp = CHORE_TIMERS_FILE + '.tmp'
+    with open(tmp, 'w') as f:
+        yaml.dump({'chore_timers': timers}, f, default_flow_style=False)
+    os.rename(tmp, CHORE_TIMERS_FILE)
+
+
 def check_due_items(session):
-    """Check for due chores and reminders. Returns list of due item names."""
+    """Check for due chores and reminders. Returns list of due item names.
+
+    Chores are read from chore_timers.yaml (persists across sessions).
+    Completed chores are removed from that file directly, not via completed_items.
+    completed_items is used only for meetings and static reminders.
+    """
     completed = session.get('completed_items', [])
     now = datetime.now()
     due = []
 
-    for chore in session.get('chore_timers', []):
-        if chore['name'] in completed:
-            continue
+    for chore in load_chore_timers():
         if now >= datetime.fromisoformat(chore['end_time']):
             due.append(chore['name'])
 
@@ -356,7 +389,7 @@ async def countdown(minutes, label):
             seconds_since_check = 0
             try:
                 session = load_session()
-                # Check for timer override
+                # Check for timer override (0 = end early, other = jump to that remaining time)
                 override = session.get('timer_override_minutes')
                 if override is not None:
                     new_remaining = int(override * 60)
@@ -370,6 +403,17 @@ async def countdown(minutes, label):
                         notify("Pomodoro", f"Timer adjusted to {int(override)} min")
                     remaining = new_remaining
                     session['timer_override_minutes'] = None
+                    save_session(session)
+
+                # Check for extend_minutes (add time to running phase)
+                extend = session.get('extend_minutes')
+                if extend is not None and extend > 0:
+                    add_seconds = int(extend * 60)
+                    remaining += add_seconds
+                    total_seconds += add_seconds
+                    print(f"\n  Phase extended by {int(extend)} min")
+                    notify("Pomodoro", f"Phase extended by {int(extend)} min")
+                    session['extend_minutes'] = None
                     save_session(session)
 
                 # Check for task switch (work phases only)
@@ -521,25 +565,36 @@ async def work_phase(is_fun_task=False):
 
     ack = await wait_for_ack()
 
-    # If user chose to extend for a meeting, run the extension countdown
-    if ack["action"] == "extend" and meeting:
-        name = meeting[0]
-        # Look up the meeting safely
-        meetings = load_session().get('meetings', [])
-        matching = [m for m in meetings if m['name'] == name]
-        if matching:
-            mins_away_now = (datetime.fromisoformat(
-                matching[0]['start_time']) - datetime.now()).total_seconds() / 60
-            if mins_away_now > upcoming_break_mins:
-                extend_mins = int(mins_away_now - upcoming_break_mins)
-                print(f"  Extending work by {extend_mins} min for meeting '{name}'")
-                await countdown(extend_mins, f"EXTENDED ({name})")
-                notify("Pomodoro", "Extended work complete!")
-                queue_prompt('work_complete',
-                    "Extended work session complete. Proceeding to break before meeting.")
-                ack = await wait_for_ack()
+    # Handle extend: run more work time, then wait for ack again
+    if ack["action"] == "extend":
+        session = load_session()
+        # If a meeting is upcoming, use time-to-meeting minus break as the extension
+        if meeting:
+            name = meeting[0]
+            meetings_list = session.get('meetings', [])
+            matching = [m for m in meetings_list if m['name'] == name]
+            if matching:
+                mins_away_now = (datetime.fromisoformat(
+                    matching[0]['start_time']) - datetime.now()).total_seconds() / 60
+                if mins_away_now > upcoming_break_mins:
+                    extend_mins = int(mins_away_now - upcoming_break_mins)
+                else:
+                    extend_mins = session.get('next_work_minutes') or WORK_MINUTES
             else:
-                print(f"  Meeting '{name}' is too close, skipping extend")
+                extend_mins = session.get('next_work_minutes') or WORK_MINUTES
+        else:
+            extend_mins = session.get('next_work_minutes') or WORK_MINUTES
+        if session.get('next_work_minutes'):
+            session['next_work_minutes'] = None
+            save_session(session)
+        print(f"  Extending work by {extend_mins} min")
+        notify("Pomodoro", f"Work extended by {extend_mins} min")
+        current_task = session.get('current_task', 'Unknown')
+        await countdown(extend_mins, f"EXTENDED ({current_task})")
+        notify("Pomodoro", "Extended work complete!")
+        queue_prompt('work_complete',
+            "Extended work session complete. Take a break or keep going?")
+        ack = await wait_for_ack()
 
     # Log time per task using countdown's task_switches data
     task_switches = timer_result.get('task_switches', [])
@@ -600,7 +655,23 @@ async def break_phase():
     queue_prompt('break_complete', prompt)
     print("BREAK phase complete")
 
-    return await wait_for_ack()
+    ack = await wait_for_ack()
+
+    # Handle extend: run more break time, then wait for ack again
+    if ack["action"] == "extend":
+        session = load_session()
+        extend_mins = session.get('next_break_minutes') or BREAK_MINUTES
+        if session.get('next_break_minutes'):
+            session['next_break_minutes'] = None
+            save_session(session)
+        print(f"  Extending break by {extend_mins} min")
+        notify("Pomodoro", f"Break extended by {extend_mins} min")
+        await countdown(extend_mins, "BREAK EXTENDED")
+        notify("Pomodoro", "Break extension complete!")
+        queue_prompt('break_complete', "Break extended. Ready to work?")
+        ack = await wait_for_ack()
+
+    return ack
 
 
 # === MAIN ===
