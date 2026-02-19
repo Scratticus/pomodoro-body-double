@@ -24,17 +24,19 @@ Multiple reminders, chores, and meeting warnings can fire at the same transition
 
 ## Platform
 
-Built and tested on **Linux** (Arch/CachyOS) with **Bash**. Should work on any Linux distro. macOS may need adjustments to the notification command (`notify-send` is Linux-specific, on macOS you'd swap it for `osascript` or `terminal-notifier`). Not tested on Windows/WSL.
+The pomodoro system is built and tested on **Linux** (Arch/CachyOS). It should work on any Linux distro. macOS needs a swap of `notify-send` for `osascript` or `terminal-notifier`. Windows is not currently tested.
+
+The voice interface (in development on `dev/voice-interface`) is being built cross-platform from the start — Linux, macOS, and Windows — with platform-specific code behind abstraction layers.
 
 ## Requirements
 
-- [Claude Code](https://github.com/anthropics/claude-code)
-- Python 3 with PyYAML (`pip install pyyaml`)
+- [Claude Code](https://github.com/anthropics/claude-code) — required, no substitute
+- [uv](https://docs.astral.sh/uv/) — Python package manager (installed automatically by `install.sh`)
 - `notify-send` for desktop notifications:
   - Arch: `pacman -S libnotify`
   - Debian/Ubuntu: `apt install libnotify-bin`
   - Fedora: `dnf install libnotify`
-  - macOS: not supported natively, see Platform note above
+  - macOS: not currently supported (voice interface will add `osascript` support)
 - Git authenticated in your terminal (if you want end-of-session git operations)
 
 ## Installation
@@ -66,18 +68,20 @@ Before installing, make sure you have:
 ### Quick Install
 
 ```bash
-git clone https://github.com/YOUR_USER/pomodoro-body-double.git ~/pomodoro-body-double
-cd ~/pomodoro-body-double
+git clone https://github.com/Scratticus/pomodoro-body-double.git
+cd pomodoro-body-double
 ./install.sh
 ```
 
 The installer will:
-1. Copy the hook script to `~/.claude/hooks/`
-2. Copy `pomodoro.py` to `~/.claude/productivity/`
-3. Install `CLAUDE.md` to `~/.claude/` (or save as `CLAUDE.pomodoro.md` if one already exists)
-4. Create data files (`session.yaml`, `log.yaml`, `tasks.yaml`, `reminders.yaml`) if they don't exist
-5. Initialise the prompt queue (`prompt_queue.json`)
-6. Configure the Claude Code hooks in `~/.claude/settings.json` (or print manual instructions if settings already exist)
+1. Install [uv](https://docs.astral.sh/uv/) to `~/.local/bin` if not already present
+2. Run `uv sync` to create the Python virtual environment and install dependencies
+3. Copy the hook script to `~/.claude/hooks/`
+4. Copy `pomodoro.py` to `~/.claude/productivity/`
+5. Install `CLAUDE.md` to `~/.claude/` (or save as `CLAUDE.pomodoro.md` if one already exists)
+6. Create data files (`session.yaml`, `log.yaml`, `tasks.yaml`, `reminders.yaml`, `chore_timers.yaml`) if they don't exist
+7. Initialise the prompt queue (`prompt_queue.json`)
+8. Configure the Claude Code hooks in `~/.claude/settings.json` (or print manual instructions if settings already exist)
 
 ### After Installation
 
@@ -273,13 +277,23 @@ Time is measured from ack to ack. When you confirm a task and Claude writes the 
 - `pomodoro.py` - The timer state machine with countdown display, async meeting monitor, and task switching
 - `hooks/pomodoro-hook.sh` - Claude Code hook script (JSON hookSpecificOutput format)
 - `CLAUDE.md` - Instructions for Claude (installed to `~/.claude/`)
+- `pyproject.toml` - Python dependencies managed by uv
+- `uv.lock` - Pinned lockfile for reproducible installs
+- `CREDITS.md` - Open source dependency tracking with license info
 - `reminders.yaml.example` - Example reminders configuration
+- `chore_timers.yaml.example` - Example chore timers configuration
 - `install.sh` - Installation script
 - `settings.json` - Example Claude Code hook configuration
+
+### Voice Interface (in development — `dev/voice-interface` branch)
+- `claude_voice/` - Python package for voice I/O, NiceGUI frontend, and Claude bridge
+  - `config.py` - All paths and constants
+  - `tts_output.py` - Piper TTS with streaming sentence chunking
 
 ### Data (created at `~/.claude/productivity/`)
 - `tasks.yaml` - Task list with work/fun categories and per-task to-do lists
 - `session.yaml` - Current session state (resets automatically between sessions)
+- `chore_timers.yaml` - Persistent chore timers (survives session resets)
 - `log.yaml` - Persistent time tracking per project
 - `reminders.yaml` - Recurring reminder schedule
 - `prompt_queue.json` - Prompt queue for hook injection (transient)
@@ -287,12 +301,12 @@ Time is measured from ack to ack. When you confirm a task and Claude writes the 
 
 ## Roadmap
 
-No dates, just things we'd like to build next:
+No dates, just things in progress or planned:
 
+- **Voice interface** (in progress on `dev/voice-interface`) — speak to Claude, hear responses via Piper TTS, NiceGUI window replaces the terminal with a glanceable timer and output display
+- **Cross-platform installer** — `scripts/install.sh` (Linux/macOS) and `scripts/install.bat` (Windows) replacing the current single `install.sh`
 - **Calendar integration** to pull meetings automatically instead of adding them manually
 - **Priority tracking** to surface tasks that haven't had enough attention and nudge toward balanced progress
-- **Improved installation** with broader testing across different setups and OS configurations
-- **macOS notification support** using `terminal-notifier` or `osascript`
 
 ## Why
 
