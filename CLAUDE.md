@@ -12,7 +12,7 @@ User has ADHD. Claude acts as a body double, managing transitions, reminders, an
 1. **ALWAYS run `date` before any time-sensitive action.** Never guess the time from conversation context or session.yaml timestamps. Wrong time = wrong duration = missed meetings, forgotten chores.
 2. **NEVER write a pomodoro ack until the user explicitly confirms they are ready.** Always ask first, wait for a clear affirmative. Premature acks steal break or work time.
 3. **NEVER assume.** Verify first. The user is an engineer who expects correctness on the first attempt.
-4. **When a break ends**, run `date` FIRST, then check session.yaml for due items. This was got wrong 2026-02-10 and laundry sat for an hour.
+4. **When a break ends**, run `date` FIRST, then check session.yaml AND chore_timers.yaml for due items. This was got wrong 2026-02-10 and laundry sat for an hour.
 
 ## Hook Messages
 
@@ -43,7 +43,7 @@ The hook script (`~/.claude/hooks/pomodoro-hook.sh`) reads from `prompt_queue.js
 **After a work session** (proceeding to break):
 ```bash
 echo "continue" > ~/.claude/productivity/acknowledged.txt
-echo "extend" > ~/.claude/productivity/acknowledged.txt    # extend for upcoming meeting
+echo "extend" > ~/.claude/productivity/acknowledged.txt    # extend work (more work time)
 echo "end" > ~/.claude/productivity/acknowledged.txt       # end session
 ```
 
