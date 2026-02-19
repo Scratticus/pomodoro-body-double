@@ -42,10 +42,11 @@ This file is updated whenever a new external resource is added.
 
 ---
 
+| en_GB-cori-high | MIT (dataset: public domain LibriVox) | https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/cori/high | British English female TTS voice (109MB) |
+
 ## Pending (to add once confirmed)
 
 - faster-whisper (STT for voice interface) - license TBC before adding
-- Piper voice model (British English) - license TBC, awaiting user voice selection
 - sounddevice (microphone capture) - license TBC before adding
 
 ---
