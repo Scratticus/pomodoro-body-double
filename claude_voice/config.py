@@ -18,9 +18,9 @@ PIPER_MODEL_PATH = Path.home() / ".local" / "share" / "piper" / "en_GB-cori-high
 PIPER_MODEL_CONFIG = Path.home() / ".local" / "share" / "piper" / "en_GB-cori-high.onnx.json"
 
 # === VOICE INPUT ===
-TRIGGER_WORD = "send"
+TRIGGER_WORDS = ["please", "thank you", "make it so"]
 TRIGGER_SILENCE_SECONDS = 1.5
-WHISPER_MODEL = "medium"
+WHISPER_MODEL = "small"
 MIC_DEVICE = None  # None = system default. Set to device name/index to override.
 
 # === VOICE PERSONA ===

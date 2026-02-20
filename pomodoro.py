@@ -212,6 +212,8 @@ async def wait_for_ack():
     """Block until ack file appears, parse content, then clear it."""
     print("  Waiting for check-in...")
     last_reminder_time = asyncio.get_event_loop().time()
+    reminder_count = 0
+    extend_prompted = False
     while True:
         now = asyncio.get_event_loop().time()
         session = load_session()
@@ -220,6 +222,12 @@ async def wait_for_ack():
         if reminder_enabled and now - last_reminder_time >= reminder_interval:
             notify("Pomodoro", "Still waiting for you!")
             last_reminder_time = now
+            reminder_count += 1
+            if reminder_count >= 2 and not extend_prompted:
+                extend_prompted = True
+                queue_prompt('extend_reminder',
+                    "Ack overdue. Follow your autonomous extend protocol.")
+                notify("Pomodoro", "Session overrun — consider extending")
         if os.path.exists(ACK_FILE) and os.path.getsize(ACK_FILE) > 0:
             with open(ACK_FILE, 'r') as f:
                 content = f.read().strip()
