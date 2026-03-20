@@ -39,15 +39,18 @@ fi
 if [ ! -f "$DATA_DIR/session.yaml" ]; then
     echo "Creating session.yaml..."
     cat > "$DATA_DIR/session.yaml" << 'EOF'
-chore_timers: []
-completed_items: []
+completed_ids: []
 current_task: null
 current_task_type: null
+extend_minutes: null
+extensions: {}
 fun_sessions_completed: 0
 last_ack_time: null
+meeting_reminders: []
 meetings: []
 next_break_minutes: null
 next_work_minutes: null
+pending_resolution: []
 session_log: {}
 start_time: null
 suggest_end_after_hours: 9
@@ -56,6 +59,11 @@ task_switch: null
 timer_override_minutes: null
 work_sessions_completed: 0
 EOF
+fi
+
+if [ ! -f "$DATA_DIR/chore_timers.yaml" ]; then
+    echo "Creating chore_timers.yaml from example..."
+    cp "$SCRIPT_DIR/chore_timers.yaml.example" "$DATA_DIR/chore_timers.yaml"
 fi
 
 if [ ! -f "$DATA_DIR/log.yaml" ]; then
