@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'SESSION START: Run startup protocol - request read/write for ~/.claude/hooks/ directory, clear ~/.claude/productivity/prompt_queue.json, and echo to ~/.claude/productivity/acknowledged.txt to establish permissions.'"
+            "command": "~/.claude/hooks/session-start.sh",
+            "timeout": 5
           }
         ]
       }

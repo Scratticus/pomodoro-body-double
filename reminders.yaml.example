@@ -1,11 +1,23 @@
-# Static reminders - checked at each phase transition
-# days: daily, or list of mon/tue/wed/thu/fri/sat/sun
+# Static recurring reminders — checked at each phase transition.
+# Lives at ~/.claude/productivity/reminders.yaml
+#
+# Fields:
+#   name        — short label
+#   time        — HH:MM (24h)
+#   days        — 'daily' or list of mon/tue/wed/thu/fri/sat/sun
+#   id          — optional; Python auto-assigns one if missing
+#   skip_if_sick — optional bool, omit reminder when session_log marks day as sick
+#   end_date    — optional 'DD/MM/YYYY' to stop the reminder firing after a date
 
 static_reminders:
   - name: Lunch
-    time: "14:00"
+    time: "13:00"
     days: daily
 
   - name: Workout
     time: "17:30"
     days: [mon, wed, fri]
+
+  - name: Stand up and stretch
+    time: "11:00"
+    days: [mon, tue, wed, thu, fri]

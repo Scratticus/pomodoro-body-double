@@ -15,6 +15,15 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Don't commit user data (lives in ~/.claude/productivity/ anyway)
+# User data lives in ~/.claude/productivity/, never commit yaml from this repo.
+# Example configs use the .yaml.example suffix and are not matched by *.yaml.
 *.yaml
-!config/*.example.yaml
+
+# Local-only sandbox — never tracked. Used for manual runs of pomodoro_core
+# against scratch data without affecting ~/.claude/productivity/.
+pomodoro-open/test_data/
+
+# Local dev artefacts
+backups/
+acknowledged.txt
+prompt_queue.json

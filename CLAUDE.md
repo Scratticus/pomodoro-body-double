@@ -22,7 +22,7 @@ UserPromptSubmit hook additional context: [type] message
 PostToolUse:Bash hook additional context: [type] message
 ```
 
-Types include `work_complete`, `break_complete`, `meeting_warning`, `extend_reminder`, `error`.
+Types: `session_start`, `suggest_break`, `suggest_work`, `meeting_starting`, `meeting_warning`, `chore`, `reminder`, `error`.
 
 **Each hook message includes the exact ack string to write and the file path.** Use the Write tool. Claude responds exactly as the hook message says. Do not add steps or assumptions beyond what the hook requests.
 
@@ -32,21 +32,23 @@ Types include `work_complete`, `break_complete`, `meeting_warning`, `extend_remi
 2. Show task list (read `tasks.yaml`)
 3. When the user names their task, write the ack immediately using Write tool:
    - File: `~/.claude/productivity/acknowledged.txt`
-   - Content: `continue:Task Name` (must match a task in tasks.yaml exactly)
+   - Content: `work:Task Name` (must match a task in tasks.yaml exactly)
 
 No second confirmation needed. Write the ack the moment the user names a task.
 
 ## Ack Format
 
-Hook messages carry the exact ack string. For reference:
+Hook messages carry the exact ack string. Vocabulary (post 2026-04-28 redesign):
 
 | Situation | Content to write |
 |-----------|-----------------|
-| After work (proceed to break) | `continue` |
-| After work (more work) | `extend` |
-| After break (start work) | `continue:Task Name` |
+| Want to take a break (after `suggest_break`) | `break` |
+| More work (extend current phase) | `extend` |
+| Start work on a task (after `suggest_work`, `session_start`, or `meeting_starting`) | `work:Task Name` |
+| Switch task mid-work-phase | `work:Task Name` (with the new task) |
 | End session | `end` |
-| Startup | `continue:Task Name` |
+
+The legacy `continue` and `continue:Task Name` tokens are rejected by `parse_ack` with a vocabulary-update prompt.
 
 File: `~/.claude/productivity/acknowledged.txt`. Always use Write tool, never Bash echo.
 
@@ -63,16 +65,18 @@ meetings:
 
 Python assigns `id` automatically — never write it manually. Timestamps everywhere are `DD/MM/YYYY HH:MM`.
 
+When meeting time arrives, pomodoro queues a `meeting_starting` prompt. Claude must ask the user to confirm and post `work:{task}` to acknowledged.txt. Pomodoro no longer auto-acks meetings (consent integrity, Step 5 redesign).
+
 After a meeting completes, add `meeting:N` to `completed_ids` in session.yaml.
 
 ## Chore and Reminder Delays
 
-When resolving a due item at break end, Claude can delay it via the `extensions` dict in session.yaml:
+When resolving a due item at break end, Claude can delay it via the `extensions` dict in session.yaml. **Use integer minutes only** — Claude's time-tracking is unreliable, so absolute timestamps are off-limits even though pomodoro's parser still accepts them as a power-user fallback.
 
 ```yaml
 extensions:
-  chore:2: {delay: 30}                   # 30 more minutes
-  reminder:1: {delay: '17/03/2026 18:00'}  # absolute timestamp
+  chore:2: {delay: 30}    # 30 more minutes
+  reminder:1: {delay: 60} # 60 more minutes
 ```
 
 The `id` (e.g. `chore:2`) comes from the prompt Python sends — echo it back exactly. Python processes it and converts `delay` to the internal snooze timestamp.
@@ -89,8 +93,8 @@ When the user says a task, to-do, or job is done/rejected/irrelevant: remove it 
 
 ```yaml
 timer_override_minutes: 0      # end phase early (checked every 10s)
-task_switch: "Task Name"       # switch task mid-work-phase (logs time per segment)
-extend_minutes: N              # add N minutes to a running phase
+task_switch: "Task Name"       # switch task mid-work-phase (logs time per segment); equivalent to posting 'work:Task Name' to ack
+extend_minutes: N              # custom extension duration; consumed by the next 'extend' ack OR the next auto-extend cycle, then cleared (clear-on-use, Step 3b)
 next_work_minutes: N           # custom duration for next work phase (one-shot)
 next_break_minutes: N          # custom duration for next break phase (one-shot)
 reminder_enabled: true/false   # toggle ack reminders on/off
@@ -98,6 +102,8 @@ reminder_interval_minutes: 5   # how often ack reminders fire (default 5)
 ```
 
 When the user says "let's finish X before the break", estimate how long X will take and set `extend_minutes: N` in session.yaml. Do NOT write the break ack — starting any phase requires explicit user confirmation.
+
+**Auto-extend behaviour (Step 5):** when a work or break timer hits zero without a phase-changing ack, pomodoro queues `suggest_break` / `suggest_work` (deduped against undelivered queue entries), auto-extends the timer by `EXTEND_MINUTES` (default 10, or `extend_minutes` if user customised), and repeats. Desktop notifications fire at every cycle. Loop exits only on `break`/`end` (work) or `work:Task`/`end` (break).
 
 ## End of Session — 4 Steps
 
